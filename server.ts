@@ -35,6 +35,51 @@ const chatDailyLimiter = rateLimit({
 
 const MAX_MESSAGE_LENGTH = 500;
 
+// Notifica WhatsApp (via Twilio) quando un lead sembra pronto a procedere.
+// Dedup leggero in memoria: al massimo una notifica ogni 30 minuti per IP.
+const NOTIFY_COOLDOWN_MS = 30 * 60 * 1000;
+const lastNotifiedAt = new Map<string, number>();
+
+async function notifyLeadOnWhatsApp(ip: string, userMessage: string, botReply: string): Promise<void> {
+  const { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM, TWILIO_WHATSAPP_TO } = process.env;
+  if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_WHATSAPP_FROM || !TWILIO_WHATSAPP_TO) {
+    return;
+  }
+
+  const now = Date.now();
+  const last = lastNotifiedAt.get(ip) || 0;
+  if (now - last < NOTIFY_COOLDOWN_MS) {
+    return;
+  }
+  lastNotifiedAt.set(ip, now);
+
+  const body = `🔔 Nuovo lead sul sito\n\nHa scritto: "${userMessage.slice(0, 200)}"\n\nRisposta bot: "${botReply.slice(0, 200)}"`;
+
+  try {
+    const auth = Buffer.from(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`).toString("base64");
+    const params = new URLSearchParams({
+      From: TWILIO_WHATSAPP_FROM,
+      To: TWILIO_WHATSAPP_TO,
+      Body: body,
+    });
+
+    const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`, {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${auth}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: params,
+    });
+
+    if (!res.ok) {
+      console.warn("Notifica WhatsApp fallita:", res.status, await res.text());
+    }
+  } catch (err: any) {
+    console.warn("Notifica WhatsApp fallita:", err?.message || err);
+  }
+}
+
 // Lazy-initialize Gemini AI client
 let aiClient: GoogleGenAI | null = null;
 function getGeminiClient(): GoogleGenAI | null {
@@ -115,6 +160,9 @@ app.post("/api/chat", chatShortLimiter, chatDailyLimiter, async (req, res) => {
     // If Gemini API is not configured, immediately use smart local fallback
     if (!ai) {
       const fallbackReply = generateSmartLeadReply(effectiveUserMessage);
+      if (fallbackReply.action === "OPEN_CTA") {
+        notifyLeadOnWhatsApp(req.ip || "unknown", effectiveUserMessage, fallbackReply.text);
+      }
       return res.json({
         reply: fallbackReply.text,
         action: fallbackReply.action,
@@ -168,6 +216,7 @@ app.post("/api/chat", chatShortLimiter, chatDailyLimiter, async (req, res) => {
     if (cleanReply.includes("[OPEN_CTA]")) {
       action = "OPEN_CTA";
       cleanReply = cleanReply.replace(/\[OPEN_CTA\]/g, "").trim();
+      notifyLeadOnWhatsApp(req.ip || "unknown", effectiveUserMessage, cleanReply);
     }
 
     const usage = response?.usageMetadata;
@@ -182,6 +231,9 @@ app.post("/api/chat", chatShortLimiter, chatDailyLimiter, async (req, res) => {
     console.warn("Utilizzo fallback lead-gen:", error?.message || error);
     const msg = req.body?.userMessage || (req.body?.messages && req.body.messages[req.body.messages.length - 1]?.text) || "";
     const fallbackReply = generateSmartLeadReply(msg);
+    if (fallbackReply.action === "OPEN_CTA") {
+      notifyLeadOnWhatsApp(req.ip || "unknown", msg, fallbackReply.text);
+    }
     return res.json({
       reply: fallbackReply.text,
       action: fallbackReply.action,
