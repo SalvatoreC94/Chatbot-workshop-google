@@ -1,0 +1,6 @@
+{
+  "name": "Assistente Attività & Chatbot Commerciale",
+  "description": "Chatbot concierge gastronomico per consigliare dove mangiare a Roma, con Google Maps multi-locale integrato, schede ristoranti, FAQ e prenotazioni rapide dei tavoli.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
