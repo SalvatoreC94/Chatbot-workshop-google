@@ -59,11 +59,21 @@ export const ChatWindow: React.FC<{ className?: string }> = ({ className = '' })
         }),
       });
 
-      if (!response.ok) {
-        throw new Error('Errore di connessione al server');
-      }
-
       const data = await response.json();
+
+      if (!response.ok) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: 'bot-limit-' + Date.now(),
+            sender: 'bot',
+            text: data.error || 'Errore di connessione al server, riprova tra poco.',
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            cta: response.status === 429 ? 'both' : null,
+          },
+        ]);
+        return;
+      }
       const botMsgId = 'bot-' + Date.now();
 
       setMessages((prev) => [

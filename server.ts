@@ -3,6 +3,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import rateLimit from "express-rate-limit";
 
 dotenv.config();
 
@@ -12,7 +13,27 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = 3000;
 
-app.use(express.json());
+app.use(express.json({ limit: "20kb" }));
+
+// Limita gli abusi: un lead vero manda al massimo qualche messaggio al minuto.
+const chatShortLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Troppe richieste, riprova tra un minuto." },
+});
+
+// Tetto giornaliero per IP: contiene il costo anche in caso di script automatizzati.
+const chatDailyLimiter = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000,
+  limit: 40,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Limite giornaliero raggiunto, riprova domani o contattami direttamente." },
+});
+
+const MAX_MESSAGE_LENGTH = 500;
 
 // Lazy-initialize Gemini AI client
 let aiClient: GoogleGenAI | null = null;
@@ -68,7 +89,7 @@ Linee guida:
 `;
 
 // API endpoint for chatbot
-app.post("/api/chat", async (req, res) => {
+app.post("/api/chat", chatShortLimiter, chatDailyLimiter, async (req, res) => {
   try {
     const { messages, userMessage } = req.body;
 
@@ -77,6 +98,11 @@ app.post("/api/chat", async (req, res) => {
     }
 
     const effectiveUserMessage = userMessage || (messages && messages[messages.length - 1]?.text) || "";
+
+    if (effectiveUserMessage.length > MAX_MESSAGE_LENGTH) {
+      return res.status(400).json({ error: `Messaggio troppo lungo (max ${MAX_MESSAGE_LENGTH} caratteri).` });
+    }
+
     const ai = getGeminiClient();
 
     // If Gemini API is not configured, immediately use smart local fallback
@@ -114,6 +140,7 @@ app.post("/api/chat", async (req, res) => {
         systemInstruction: LEAD_GEN_PROMPT,
         temperature: 0.6,
         thinkingConfig: { thinkingBudget: 0 },
+        maxOutputTokens: 300,
       },
     });
 
