@@ -10,7 +10,7 @@ export const FREELANCER_PROFILE: FreelancerProfile = {
   name: 'Salvatore Cozzolino',
   role: 'Sviluppatore fullstack freelance (specializzato frontend)',
   calendlyUrl: 'https://calendly.com/TUO-LINK/30min',
-  whatsappNumber: '39XXXXXXXXXX',
+  whatsappNumber: '393517536552',
   whatsappPrefilledMessage:
     'Ciao Salvatore, ho visto il tuo sito e vorrei parlarti di un progetto.',
 };
