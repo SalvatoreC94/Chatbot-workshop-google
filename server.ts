@@ -35,20 +35,14 @@ const chatDailyLimiter = rateLimit({
 
 const MAX_MESSAGE_LENGTH = 500;
 
-// Notifica WhatsApp (via Twilio) quando un lead sembra pronto a procedere.
+// Notifica Telegram quando un lead sembra pronto a procedere.
 // Dedup leggero in memoria: al massimo una notifica ogni 30 minuti per IP.
 const NOTIFY_COOLDOWN_MS = 30 * 60 * 1000;
 const lastNotifiedAt = new Map<string, number>();
 
-async function notifyLeadOnWhatsApp(ip: string, userMessage: string, botReply: string): Promise<void> {
-  const { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_API_KEY_SID, TWILIO_API_KEY_SECRET, TWILIO_WHATSAPP_FROM, TWILIO_WHATSAPP_TO } = process.env;
-
-  // Autenticazione: Auth Token classico (AC... + token) oppure API Key (SK... + secret),
-  // ma l'Account SID (AC...) serve comunque nell'URL in entrambi i casi.
-  const authUser = TWILIO_API_KEY_SID || TWILIO_ACCOUNT_SID;
-  const authPass = TWILIO_API_KEY_SECRET || TWILIO_AUTH_TOKEN;
-
-  if (!TWILIO_ACCOUNT_SID || !authUser || !authPass || !TWILIO_WHATSAPP_FROM || !TWILIO_WHATSAPP_TO) {
+async function notifyLeadOnTelegram(ip: string, userMessage: string, botReply: string): Promise<void> {
+  const { TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID } = process.env;
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
     return;
   }
 
@@ -59,30 +53,20 @@ async function notifyLeadOnWhatsApp(ip: string, userMessage: string, botReply: s
   }
   lastNotifiedAt.set(ip, now);
 
-  const body = `🔔 Nuovo lead sul sito\n\nHa scritto: "${userMessage.slice(0, 200)}"\n\nRisposta bot: "${botReply.slice(0, 200)}"`;
+  const text = `🔔 Nuovo lead sul sito\n\nHa scritto: "${userMessage.slice(0, 200)}"\n\nRisposta bot: "${botReply.slice(0, 200)}"`;
 
   try {
-    const auth = Buffer.from(`${authUser}:${authPass}`).toString("base64");
-    const params = new URLSearchParams({
-      From: TWILIO_WHATSAPP_FROM,
-      To: TWILIO_WHATSAPP_TO,
-      Body: body,
-    });
-
-    const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`, {
+    const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
       method: "POST",
-      headers: {
-        Authorization: `Basic ${auth}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: params,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text }),
     });
 
     if (!res.ok) {
-      console.warn("Notifica WhatsApp fallita:", res.status, await res.text());
+      console.warn("Notifica Telegram fallita:", res.status, await res.text());
     }
   } catch (err: any) {
-    console.warn("Notifica WhatsApp fallita:", err?.message || err);
+    console.warn("Notifica Telegram fallita:", err?.message || err);
   }
 }
 
@@ -167,7 +151,7 @@ app.post("/api/chat", chatShortLimiter, chatDailyLimiter, async (req, res) => {
     if (!ai) {
       const fallbackReply = generateSmartLeadReply(effectiveUserMessage);
       if (fallbackReply.action === "OPEN_CTA") {
-        notifyLeadOnWhatsApp(req.ip || "unknown", effectiveUserMessage, fallbackReply.text);
+        notifyLeadOnTelegram(req.ip || "unknown", effectiveUserMessage, fallbackReply.text);
       }
       return res.json({
         reply: fallbackReply.text,
@@ -222,7 +206,7 @@ app.post("/api/chat", chatShortLimiter, chatDailyLimiter, async (req, res) => {
     if (cleanReply.includes("[OPEN_CTA]")) {
       action = "OPEN_CTA";
       cleanReply = cleanReply.replace(/\[OPEN_CTA\]/g, "").trim();
-      notifyLeadOnWhatsApp(req.ip || "unknown", effectiveUserMessage, cleanReply);
+      notifyLeadOnTelegram(req.ip || "unknown", effectiveUserMessage, cleanReply);
     }
 
     const usage = response?.usageMetadata;
@@ -238,7 +222,7 @@ app.post("/api/chat", chatShortLimiter, chatDailyLimiter, async (req, res) => {
     const msg = req.body?.userMessage || (req.body?.messages && req.body.messages[req.body.messages.length - 1]?.text) || "";
     const fallbackReply = generateSmartLeadReply(msg);
     if (fallbackReply.action === "OPEN_CTA") {
-      notifyLeadOnWhatsApp(req.ip || "unknown", msg, fallbackReply.text);
+      notifyLeadOnTelegram(req.ip || "unknown", msg, fallbackReply.text);
     }
     return res.json({
       reply: fallbackReply.text,
